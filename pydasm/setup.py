@@ -31,6 +31,16 @@ from distutils.sysconfig import get_python_inc
 
 incdir = os.path.join(get_python_inc(plat_specific=1))
 
+'''Use this one for debug symbols
+module = Extension('pydasm',
+	include_dirs = [incdir],
+	libraries = [],
+	library_dirs = [],
+	sources = ['../libdasm.c', 'pydasm.c'],
+	extra_compile_args=['/Zi'],
+	extra_link_args=['/DEBUG'])
+'''
+
 module = Extension('pydasm',
 	include_dirs = [incdir],
 	libraries = [],
@@ -38,8 +48,8 @@ module = Extension('pydasm',
 	sources = ['../libdasm.c', 'pydasm.c'])
 
 setup(name = 'pydasm',
-    version = '1.5',
-    description = 'Python module wrapping libdasm',
-    author = 'Ero Carrera',
-    author_email = 'ero@dkbza.org',
+    version = '1.0',
+    description = 'Python 3 extension module for libdasm',
+    author = 'Nicholas T Smith',
+    author_email = 'nicholastsmithblog@gmail.com',
     ext_modules = [module])

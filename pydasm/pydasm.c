@@ -30,6 +30,7 @@
 
 
 #include <Python.h>
+#include "structmember.h"
 #include "../libdasm.h"
 
 
@@ -39,7 +40,7 @@
     Instruction types borrowed from
     "libdasm.h"
 */
-char *instruction_types[] = {
+char* instruction_types[] = {
 	"INSTRUCTION_TYPE_ASC",
 	"INSTRUCTION_TYPE_DCL",
 	"INSTRUCTION_TYPE_MOV",
@@ -144,11 +145,8 @@ char *instruction_types[] = {
 	"INSTRUCTION_TYPE_SYSENTER",
 	"INSTRUCTION_TYPE_FPU_CTRL",
 	"INSTRUCTION_TYPE_FPU",
-
 	"INSTRUCTION_TYPE_MMX",
-
 	"INSTRUCTION_TYPE_SSE",
-
 	"INSTRUCTION_TYPE_OTHER",
 	"INSTRUCTION_TYPE_PRIV",
     NULL };
@@ -157,7 +155,7 @@ char *instruction_types[] = {
     Operand types borrowed from
     "libdasm.h"
 */
-char *operand_types[] = {
+char* operand_types[] = {
 	"OPERAND_TYPE_NONE",
 	"OPERAND_TYPE_MEMORY",
 	"OPERAND_TYPE_REGISTER",
@@ -168,7 +166,7 @@ char *operand_types[] = {
     Registers borrowed from
     "libdasm.h"
 */
-char *registers[] = {
+char* registers[] = {
     "REGISTER_EAX",
     "REGISTER_ECX",
     "REGISTER_EDX",
@@ -185,7 +183,7 @@ char *registers[] = {
     Register types borrowed from
     "libdasm.h"
 */
-char *register_types[] = {
+char* register_types[] = {
     "REGISTER_TYPE_GEN",
     "REGISTER_TYPE_SEGMENT",
     "REGISTER_TYPE_DEBUG",
@@ -196,16 +194,262 @@ char *register_types[] = {
     "REGISTER_TYPE_FPU",
     NULL };
 
+//===========================================================
+//Structure definitions
+//===========================================================
+	
+typedef struct {
+    PyObject_HEAD
+} PyDAsmObject;
 
-PyObject *module;   // Main module Python object
+typedef struct {
+    PyObject_HEAD
+    PyObject*  mnemonic; 
+    int flags1;
+	int flags2;
+	int flags3;
+	int modrm;
+	int type;
+} PyInstObject;
 
+typedef struct {
+    PyObject_HEAD
+    int length;
+	int type;
+	int mode;
+	int opcode;
+	int modrm;
+	int sib;
+	int extindex;
+	int fpuindex;
+	int dispbytes;
+	int immbytes;
+	int sectionbytes;
+	PyObject* op1;
+	PyObject* op2;
+	PyObject* op3;
+	PyObject* ptr;
+	int flags;
+	int eflags_affected;
+	int eflags_used;
+} PyInstructionObject;
+
+typedef struct {
+	PyObject_HEAD
+	int type;
+	int reg;
+	int basereg;
+	int indexreg;
+	int scale;
+	int dispbytes;
+	int dispoffset;
+	int immbytes;
+	int immoffset;
+	int sectionbytes;
+	int section;
+	int displacement;
+	int immediate;
+	int flags;
+} PyOperandObject;
+
+//===========================================================
+//Forward definitions
+//===========================================================
+
+PyObject* CreateInstObj(INST *pinst);
+PyObject* CreateOperandObj(OPERAND *op);
+PyObject* CreateInstructionObj(INSTRUCTION *insn);
+
+//===========================================================
+//Dealloc routines
+//===========================================================
+
+static void DAsm_dealloc(PyDAsmObject* self) {
+	Py_TYPE(self)->tp_free((PyObject*) self);
+}
+
+static void Inst_dealloc(PyInstObject* self) {
+	Py_XDECREF(self->mnemonic);
+	Py_TYPE(self)->tp_free((PyObject*) self);
+}
+
+static void Instruction_dealloc(PyInstructionObject* self) {
+	Py_XDECREF(self->op1);
+	Py_XDECREF(self->op2);
+	Py_XDECREF(self->op3);
+	Py_XDECREF(self->ptr);
+	Py_TYPE(self)->tp_free((PyObject*) self);
+}
+
+static void Operand_dealloc(PyOperandObject* self) {
+	Py_TYPE(self)->tp_free((PyObject*) self);
+}
+
+//===========================================================
+//New routines
+//===========================================================
+//Macro for assigning Py_None and incrementing its ref count
+#define PY_NONE_INCREF Py_None; Py_INCREF(Py_None)
+
+static PyObject* DAsm_new(PyTypeObject *type, PyObject* args, PyObject* kwds) {
+	PyDAsmObject* self = (PyDAsmObject*) type->tp_alloc(type, 0);
+	if(NULL == self)
+		return NULL;
+	return (PyObject*) self;
+}
+
+static PyObject* Instruction_new(PyTypeObject *type, PyObject* args, PyObject* kwds) {
+	PyInstructionObject* self = (PyInstructionObject*) type->tp_alloc(type, 0);
+	if(NULL == self)
+		return NULL;
+	
+	self->length = 0;
+	self->type = 0;
+	self->mode = 0;
+	self->opcode = 0;
+	self->modrm = 0;
+	self->sib = 0;
+	self->extindex = 0;
+	self->fpuindex = 0;
+	self->dispbytes = 0;
+	self->immbytes = 0;
+	self->sectionbytes = 0;
+	
+	self->op1 = PY_NONE_INCREF;
+	self->op2 = PY_NONE_INCREF;
+	self->op3 = PY_NONE_INCREF;
+	self->ptr = PY_NONE_INCREF;
+	
+	self->flags = 0;
+	self->eflags_affected = 0;
+	self->eflags_used = 0;
+	
+	return (PyObject*) self;
+}
+
+static PyObject* Inst_new(PyTypeObject *type, PyObject* args, PyObject* kwds) {
+	PyInstObject* self = (PyInstObject*) type->tp_alloc(type, 0);
+	if(NULL == self)
+		return NULL;
+	self->mnemonic = PyUnicode_FromString("");
+    if(NULL == self->mnemonic) {
+		Py_DECREF(self);
+        return NULL;
+    }
+	self->flags1 = 0;
+	self->flags2 = 0;
+	self->flags3 = 0;
+	self->modrm = 0;
+	self->type = 0;
+	
+	return (PyObject*) self;
+}
+
+static PyObject* Operand_new(PyTypeObject *type, PyObject* args, PyObject* kwds) {
+	PyOperandObject* self = (PyOperandObject*) type->tp_alloc(type, 0);
+	if(NULL == self)
+		return NULL;
+	self->type = 0;
+	self->reg = 0;
+	self->basereg = 0;
+	self->indexreg = 0;
+	self->scale = 0;
+	self->dispbytes = 0;
+	self->dispoffset = 0;
+	self->immbytes = 0;
+	self->immoffset;
+	self->sectionbytes = 0;
+	self->section = 0;
+	self->displacement = 0;
+	self->immediate = 0;
+	self->flags = 0;
+	return (PyObject*) self;
+}
+
+//===========================================================
+//init routines
+//===========================================================
+
+static int DAsm_init(PyDAsmObject* self, PyObject* args, PyObject* kwds) {
+	return 0;
+}
+
+static int Inst_init(PyInstObject* self, PyObject* args, PyObject* kwds) {
+	return 0;
+}
+
+static int Instruction_init(PyInstructionObject* self, PyObject* args, PyObject* kwds) {
+	return 0;
+}
+
+static int Operand_init(PyOperandObject* self, PyObject* args, PyObject* kwds) {
+	return 0;
+}
+
+//===========================================================
+//Definitions of attributes
+//===========================================================
+
+static PyMemberDef DAsmMembers[] = {
+    {NULL}  /* Sentinel */
+};
+
+static PyMemberDef InstMembers[] = {
+    {"mnemonic", T_OBJECT_EX, offsetof(PyInstObject, mnemonic), 0, "instruction mnemonic"},
+    {"flags1", 	 T_INT, offsetof(PyInstObject, flags1), 		0, "flag one"},
+    {"flags2", 	 T_INT, offsetof(PyInstObject, flags2), 		0, "flag two"},
+	{"flags3", 	 T_INT, offsetof(PyInstObject, flags3), 		0, "flag three"},
+	{"modrm", 	 T_INT, offsetof(PyInstObject, modrm),  		0, "modrm"},
+	{"type", 	 T_INT, offsetof(PyInstObject, type), 			0, "instruction type"},
+    {NULL}  /* Sentinel */
+};
+
+static PyMemberDef InstructionMembers[] = {
+	{"length", 		 	T_INT, 		 offsetof(PyInstructionObject, length), 		 0, "instruction length"},
+	{"type", 		 	T_INT, 		 offsetof(PyInstructionObject, type), 			 0, "instruction type"},
+	{"mode", 		 	T_INT, 		 offsetof(PyInstructionObject, mode), 			 0, "instruction mode"},
+	{"opcode", 		 	T_INT, 		 offsetof(PyInstructionObject, opcode), 		 0, "instruction opcode"},
+	{"modrm", 		 	T_INT, 		 offsetof(PyInstructionObject, modrm), 			 0, "instruction modrm"},
+	{"sib", 	     	T_INT, 		 offsetof(PyInstructionObject, sib), 			 0, "instruction sib"},
+	{"extindex", 	 	T_INT, 		 offsetof(PyInstructionObject, extindex), 		 0, "instruction extindex"},
+	{"fpuindex", 	 	T_INT, 		 offsetof(PyInstructionObject, fpuindex), 		 0, "instruction fpuindex"},
+	{"dispbytes", 	 	T_INT, 		 offsetof(PyInstructionObject, dispbytes), 		 0, "instruction dispbytes"},
+	{"immbytes", 	 	T_INT, 		 offsetof(PyInstructionObject, immbytes), 		 0, "instruction immbytes"},
+	{"sectionbytes", 	T_INT, 		 offsetof(PyInstructionObject, sectionbytes), 	 0, "instruction sectionbytes"},
+	{"op1", 		 	T_OBJECT_EX, offsetof(PyInstructionObject, op1), 			 0, "instruction op1"},
+	{"op2", 		 	T_OBJECT_EX, offsetof(PyInstructionObject, op2), 			 0, "instruction op2"},
+	{"op3", 	     	T_OBJECT_EX, offsetof(PyInstructionObject, op3), 			 0, "instruction op3"},
+	{"ptr", 		 	T_OBJECT_EX, offsetof(PyInstructionObject, ptr), 			 0, "instruction inst ptr"},
+	{"flags", 		    T_INT, 	   	 offsetof(PyInstructionObject, flags), 			 0, "instruction flags"},
+	{"eflags_affected", T_INT, 		 offsetof(PyInstructionObject, eflags_affected), 0, "instruction eflags_affected"},
+	{"eflags_used", 	T_INT, 		 offsetof(PyInstructionObject, eflags_used), 	 0, "instruction eflags_used"},
+    {NULL}  /* Sentinel */
+};
+
+static PyMemberDef OperandMembers[] = {
+	{"type", 		 T_INT, offsetof(PyOperandObject, type), 		 0, "type"},
+	{"reg", 	     T_INT, offsetof(PyOperandObject, reg), 		 0, "reg"},
+	{"basereg", 	 T_INT, offsetof(PyOperandObject, basereg), 	 0, "base reg"},
+	{"indexreg", 	 T_INT, offsetof(PyOperandObject, indexreg),     0, "index reg"},
+    {"scale", 	 	 T_INT, offsetof(PyOperandObject, scale),	     0, "scale"},
+	{"dispbytes", 	 T_INT, offsetof(PyOperandObject, dispbytes),    0, "disp bytes"},
+	{"dispoffset", 	 T_INT, offsetof(PyOperandObject, dispoffset),   0, "disp offset"},
+	{"immbytes", 	 T_INT, offsetof(PyOperandObject, immbytes), 	 0, "imm bytes"},
+	{"immoffset", 	 T_INT, offsetof(PyOperandObject, immoffset), 	 0, "imm offset"},
+	{"sectionbytes", T_INT, offsetof(PyOperandObject, sectionbytes), 0, "section bytes"},
+	{"section", 	 T_INT, offsetof(PyOperandObject, section), 	 0, "section"},
+	{"displacement", T_INT, offsetof(PyOperandObject, displacement), 0, "displacement"},
+	{"immediate", 	 T_INT, offsetof(PyOperandObject, immediate),	 0, "immediate"},
+	{"flags", 		 T_INT, offsetof(PyOperandObject, flags),	 	 0, "flags"},
+    {NULL}  /* Sentinel */
+};
 
 /*
     Check whether we got a Python Object
 */
-PyObject *check_object(PyObject *pObject)
+PyObject* CheckObj(PyObject* pObject)
 {
-	PyObject *pException;
+	PyObject* pException;
 	
 	if(!pObject) {
 		pException = PyErr_Occurred();
@@ -217,28 +461,26 @@ PyObject *check_object(PyObject *pObject)
     return pObject;
 }
 
-
 /*
     Assign an attribute "attr" named "name" to an object "obj"
 */
-void assign_attribute(PyObject *obj, char *name, PyObject *attr)
+void AssignAttr(PyObject* obj, char* name, PyObject* attr)
 {
     PyObject_SetAttrString(obj, name, attr);
     Py_DECREF(attr);
 }
-
 
 /*
     Get an attribute named "attr_name" from object "obj"
     The function steals the reference! note the decrement of
     the reference count.
 */
-PyObject *get_attribute(PyObject *obj, char *attr_name)
+PyObject* GetAttr(PyObject* obj, char* attr_name)
 {
-    PyObject *pObj;
+    PyObject* pObj;
     
     pObj = PyObject_GetAttrString(obj, attr_name);
-	if(!check_object(pObj)) {
+	if(!CheckObj(pObj)) {
         PyErr_SetString(PyExc_ValueError, "Can't get attribute from object");
         return NULL;
     }
@@ -247,67 +489,25 @@ PyObject *get_attribute(PyObject *obj, char *attr_name)
     return pObj;
 }
 
-
 /*
     Get an Long attribute named "attr_name" from object "obj" and
     return it as a "long int"
 */
-long int get_long_attribute(PyObject *o, char *attr_name)
+long int GetLongAttr(PyObject* o, char* attr_name)
 {
-    PyObject *pObj;
+    PyObject* pObj;
     
-    pObj = get_attribute(o, attr_name);
+    pObj = GetAttr(o, attr_name);
 	if(!pObj)
         return 0;
         
     return PyLong_AsLong(pObj);;
 }
 
-
-/*
-    Create a new class and take care of decrementing references.
-*/
-PyObject *create_class(char *class_name)
-{
-    PyObject *pClass;
-    PyObject *pClassDict = PyDict_New();
-    PyObject *pClassName = PyString_FromString(class_name);
-    
-    pClass = PyClass_New(NULL, pClassDict, pClassName);
-    if(!check_object(pClass))
-        return NULL;
-        
-    Py_DECREF(pClassDict);
-    Py_DECREF(pClassName);
-    
-    return pClass;
-}
-
-
-/*
-    Create an "Inst" Python object from an INST structure.
-*/
-PyObject *create_inst_object(INST *pinst)
-{
-    PyObject *pPInst = create_class("Inst");
-    
-    if(!pPInst)
-        return NULL;
-
-    assign_attribute(pPInst, "type", PyLong_FromLong(pinst->type));
-    assign_attribute(pPInst, "mnemonic", PyString_FromString(pinst->mnemonic));
-    assign_attribute(pPInst, "flags1", PyLong_FromLong(pinst->flags1));
-    assign_attribute(pPInst, "flags2", PyLong_FromLong(pinst->flags2));
-    assign_attribute(pPInst, "flags3", PyLong_FromLong(pinst->flags3));
-    assign_attribute(pPInst, "modrm", PyLong_FromLong(pinst->modrm));
-    
-    return pPInst;
-}
-
 /*
     Fill an INST structure from the data in an "Inst" Python object.
 */
-void fill_inst_structure(PyObject *pPInst, PINST *_pinst)
+void FillInstStruct(PyObject* pPInst, PINST *_pinst)
 {
     ssize_t mnemonic_length;
     PINST pinst;
@@ -322,128 +522,61 @@ void fill_inst_structure(PyObject *pPInst, PINST *_pinst)
 		return;
 	}
     
-    pinst->type = get_long_attribute(pPInst, "type");
+    pinst->type = GetLongAttr(pPInst, "type");
     
-    PyString_AsStringAndSize(
-        get_attribute(pPInst, "mnemonic"),
-        (void *)&pinst->mnemonic, &mnemonic_length);
+    pinst->mnemonic = PyUnicode_AsUTF8AndSize(GetAttr(pPInst, "mnemonic"), &mnemonic_length);
 
-
-    pinst->flags1 = get_long_attribute(pPInst, "flags1");
-    pinst->flags2 = get_long_attribute(pPInst, "flags2");
-    pinst->flags3 = get_long_attribute(pPInst, "flags3");
-    pinst->modrm = get_long_attribute(pPInst, "modrm");
+    pinst->flags1 = GetLongAttr(pPInst, "flags1");
+    pinst->flags2 = GetLongAttr(pPInst, "flags2");
+    pinst->flags3 = GetLongAttr(pPInst, "flags3");
+    pinst->modrm =  GetLongAttr(pPInst, "modrm");
 }
-
-
-/*
-    Create an "Operand" Python object from an OPERAND structure.
-*/
-PyObject *create_operand_object(OPERAND *op)
-{
-    PyObject *pOperand = create_class("Operand");
-    
-    if(!pOperand)
-        return NULL;
-
-    assign_attribute(pOperand, "type", PyLong_FromLong(op->type));
-    assign_attribute(pOperand, "reg", PyLong_FromLong(op->reg));
-    assign_attribute(pOperand, "basereg", PyLong_FromLong(op->basereg));
-    assign_attribute(pOperand, "indexreg", PyLong_FromLong(op->indexreg));
-    assign_attribute(pOperand, "scale", PyLong_FromLong(op->scale));
-    assign_attribute(pOperand, "dispbytes", PyLong_FromLong(op->dispbytes));
-    assign_attribute(pOperand, "dispoffset", PyLong_FromLong(op->dispoffset));
-    assign_attribute(pOperand, "immbytes", PyLong_FromLong(op->immbytes));
-    assign_attribute(pOperand, "immoffset", PyLong_FromLong(op->immoffset));
-    assign_attribute(pOperand, "sectionbytes", PyLong_FromLong(op->sectionbytes));
-    assign_attribute(pOperand, "section", PyLong_FromLong(op->section));
-    assign_attribute(pOperand, "displacement", PyLong_FromLong(op->displacement));
-    assign_attribute(pOperand, "immediate", PyLong_FromLong(op->immediate));
-    assign_attribute(pOperand, "flags", PyLong_FromLong(op->flags));
-    
-    return pOperand;
-}
-
 
 /*
     Fill an OPERAND structure from the data in an "Operand" Python object.
 */
-void fill_operand_structure(PyObject *pOperand, OPERAND *op)
+void FillOperandStruct(PyObject* pOperand, OPERAND *op)
 {
     if(!pOperand || !op)
         return;
         
-    op->type = get_long_attribute(pOperand, "type");
-    op->reg = get_long_attribute(pOperand, "reg");
-    op->basereg = get_long_attribute(pOperand, "basereg");
-    op->indexreg = get_long_attribute(pOperand, "indexreg");
-    op->scale = get_long_attribute(pOperand, "scale");
-    op->dispbytes = get_long_attribute(pOperand, "dispbytes");
-    op->dispoffset = get_long_attribute(pOperand, "dispoffset");
-    op->immbytes = get_long_attribute(pOperand, "immbytes");
-    op->immoffset = get_long_attribute(pOperand, "immoffset");
-    op->sectionbytes = get_long_attribute(pOperand, "sectionbytes");
-    op->section = get_long_attribute(pOperand, "section");
-    op->displacement = get_long_attribute(pOperand, "displacement");
-    op->immediate = get_long_attribute(pOperand, "immediate");
-    op->flags = get_long_attribute(pOperand, "flags");
+    op->type =           GetLongAttr(pOperand, "type");
+    op->reg =            GetLongAttr(pOperand, "reg");
+    op->basereg =        GetLongAttr(pOperand, "basereg");
+    op->indexreg =       GetLongAttr(pOperand, "indexreg");
+    op->scale =          GetLongAttr(pOperand, "scale");
+    op->dispbytes =      GetLongAttr(pOperand, "dispbytes");
+    op->dispoffset =     GetLongAttr(pOperand, "dispoffset");
+    op->immbytes =       GetLongAttr(pOperand, "immbytes");
+    op->immoffset =      GetLongAttr(pOperand, "immoffset");
+    op->sectionbytes =   GetLongAttr(pOperand, "sectionbytes");
+    op->section = (WORD) GetLongAttr(pOperand, "section");
+    op->displacement =   GetLongAttr(pOperand, "displacement");
+    op->immediate =      GetLongAttr(pOperand, "immediate");
+    op->flags =          GetLongAttr(pOperand, "flags");
 }
-
-
-/*
-    Create an "Instruction" Python object from an INSTRUCTION structure.
-*/
-PyObject *create_instruction_object(INSTRUCTION *insn)
-{
-    PyObject *pInstruction = create_class("Instruction");
-
-    if(!pInstruction)
-        return NULL;
-    
-    assign_attribute(pInstruction, "length", PyLong_FromLong(insn->length));
-    assign_attribute(pInstruction, "type", PyLong_FromLong(insn->type));
-    assign_attribute(pInstruction, "mode", PyLong_FromLong(insn->mode));
-    assign_attribute(pInstruction, "opcode", PyLong_FromLong(insn->opcode));
-    assign_attribute(pInstruction, "modrm", PyLong_FromLong(insn->modrm));
-    assign_attribute(pInstruction, "sib", PyLong_FromLong(insn->sib));
-    assign_attribute(pInstruction, "extindex", PyLong_FromLong(insn->extindex));
-    assign_attribute(pInstruction, "fpuindex", PyLong_FromLong(insn->fpuindex));
-    assign_attribute(pInstruction, "dispbytes", PyLong_FromLong(insn->dispbytes));
-    assign_attribute(pInstruction, "immbytes", PyLong_FromLong(insn->immbytes));
-    assign_attribute(pInstruction, "sectionbytes", PyLong_FromLong(insn->sectionbytes));
-    assign_attribute(pInstruction, "op1", create_operand_object(&insn->op1));
-    assign_attribute(pInstruction, "op2", create_operand_object(&insn->op2));
-    assign_attribute(pInstruction, "op3", create_operand_object(&insn->op3));
-    assign_attribute(pInstruction, "ptr", create_inst_object(insn->ptr));
-    assign_attribute(pInstruction, "flags", PyLong_FromLong(insn->flags));
-    assign_attribute(pInstruction, "eflags_affected", PyLong_FromLong(insn->eflags_affected));
-    assign_attribute(pInstruction, "eflags_used", PyLong_FromLong(insn->eflags_used));
-        
-    return pInstruction;
-}
-
 
 /*
     Fill an INSTRUCTION structure from the data in an "Instruction" Python object.
 */
-void fill_instruction_structure(PyObject *pInstruction, INSTRUCTION *insn)
+void FillInstructionStruct(PyObject* pInstruction, INSTRUCTION *insn)
 {
-    insn->length = get_long_attribute(pInstruction, "length");
-    insn->type = get_long_attribute(pInstruction, "type");
-    insn->mode = get_long_attribute(pInstruction, "mode");
-    insn->opcode = get_long_attribute(pInstruction, "opcode");
-    insn->modrm = get_long_attribute(pInstruction, "modrm");
-    insn->sib = get_long_attribute(pInstruction, "sib");
-    insn->extindex = get_long_attribute(pInstruction, "extindex");
-    insn->fpuindex = get_long_attribute(pInstruction, "fpuindex");
-    insn->dispbytes = get_long_attribute(pInstruction, "dispbytes");
-    insn->immbytes = get_long_attribute(pInstruction, "immbytes");
-    insn->sectionbytes = get_long_attribute(pInstruction, "sectionbytes");
-    insn->flags = get_long_attribute(pInstruction, "flags");
-    fill_operand_structure(get_attribute(pInstruction, "op1"), &insn->op1);
-    fill_operand_structure(get_attribute(pInstruction, "op2"), &insn->op2);
-    fill_operand_structure(get_attribute(pInstruction, "op3"), &insn->op3);
-    fill_inst_structure(get_attribute(pInstruction, "ptr"), &insn->ptr);
+    insn->length =          GetLongAttr(pInstruction, "length");
+    insn->type =            GetLongAttr(pInstruction, "type");
+    insn->mode =            GetLongAttr(pInstruction, "mode");
+    insn->opcode =   (BYTE) GetLongAttr(pInstruction, "opcode");
+    insn->modrm =    (BYTE) GetLongAttr(pInstruction, "modrm");
+    insn->sib =      (BYTE) GetLongAttr(pInstruction, "sib");
+    insn->extindex =        GetLongAttr(pInstruction, "extindex");
+    insn->fpuindex =        GetLongAttr(pInstruction, "fpuindex");
+    insn->dispbytes =       GetLongAttr(pInstruction, "dispbytes");
+    insn->immbytes =        GetLongAttr(pInstruction, "immbytes");
+    insn->sectionbytes =    GetLongAttr(pInstruction, "sectionbytes");
+    insn->flags =           GetLongAttr(pInstruction, "flags");
+    FillOperandStruct(GetAttr(pInstruction, "op1"), &insn->op1);
+    FillOperandStruct(GetAttr(pInstruction, "op2"), &insn->op2);
+    FillOperandStruct(GetAttr(pInstruction, "op3"), &insn->op3);
+    FillInstStruct(GetAttr(pInstruction, "ptr"), &insn->ptr);
 }
 
 /*
@@ -455,15 +588,12 @@ void fill_instruction_structure(PyObject *pInstruction, INSTRUCTION *insn)
     "either MODE_16 or MODE_32. Returns an Instruction object or \nNone if "    \
     "the instruction can't be disassembled."
     
-PyObject *pydasm_get_instruction(PyObject *self, PyObject *args)
+PyObject* PyDAsmGetInstruction(PyObject* self, PyObject* args)
 {
 	PyObject *pBuffer, *pMode;
 	INSTRUCTION insn;
 	int size, mode;
-	ssize_t data_length;
-    char *data;
-
-    
+	
 	if(!args || PyObject_Length(args)!=2) {
 		PyErr_SetString(PyExc_TypeError,
 			"Invalid number of arguments, 2 expected: (data, mode)");
@@ -471,28 +601,33 @@ PyObject *pydasm_get_instruction(PyObject *self, PyObject *args)
 	}
 	
 	pBuffer = PyTuple_GetItem(args, 0);
-	if(!check_object(pBuffer)) {
+	if(!CheckObj(pBuffer)) {
         PyErr_SetString(PyExc_ValueError, "Can't get buffer from arguments");
     }
     
 	pMode = PyTuple_GetItem(args, 1);
-	if(!check_object(pMode)) {
+	if(!CheckObj(pMode)) {
         PyErr_SetString(PyExc_ValueError, "Can't get mode from arguments");
     }
     mode = PyLong_AsLong(pMode);
 
-    PyString_AsStringAndSize(pBuffer, &data, &data_length);
+	ssize_t data_length;
+    char* data;
 	
-	size = get_instruction(&insn, (unsigned char *)data, mode);
+	if(PyBytes_AsStringAndSize(pBuffer, &data, &data_length) == -1) {
+		PyErr_SetString(PyExc_TypeError, "Error reading buffer!");
+		return NULL;
+	}
+	
+	size = get_instruction(&insn, (unsigned char*) data, mode);
     
     if(!size) {    
         Py_INCREF(Py_None);
         return Py_None;
     }
 
-    return create_instruction_object(&insn);
+    return CreateInstructionObj(&insn);
 }
-
 
 /*
     Python counterpart of libdasm's "get_instruction_string"
@@ -504,13 +639,11 @@ PyObject *pydasm_get_instruction(PyObject *self, PyObject *args)
     "libdasm for meaning). Returns a string representation of the \n"       \
     "disassembled instruction."
     
-PyObject *pydasm_get_instruction_string(PyObject *self, PyObject *args)
+PyObject* PyDAsmGetInstructionString(PyObject* self, PyObject* args)
 {
-	PyObject *pInstruction, *pFormat, *pOffset, *pStr;
+	PyObject* pInstruction, *pFormat, *pOffset, *pStr;
 	INSTRUCTION insn;
 	unsigned long int offset, format;
-    char *data;
-
     
 	if(!args || PyObject_Length(args)!=3) {
 		PyErr_SetString(PyExc_TypeError,
@@ -519,7 +652,7 @@ PyObject *pydasm_get_instruction_string(PyObject *self, PyObject *args)
 	}
 	
 	pInstruction = PyTuple_GetItem(args, 0);
-	if(!check_object(pInstruction)) {
+	if(!CheckObj(pInstruction)) {
         PyErr_SetString(PyExc_ValueError, "Can't get instruction from arguments");
     }
     if(pInstruction == Py_None) {
@@ -527,22 +660,23 @@ PyObject *pydasm_get_instruction_string(PyObject *self, PyObject *args)
         return Py_None;
     }
     memset(&insn, 0, sizeof(INSTRUCTION));
-    fill_instruction_structure(pInstruction, &insn);
+    FillInstructionStruct(pInstruction, &insn);
     
 	pFormat = PyTuple_GetItem(args, 1);
-	if(!check_object(pFormat)) {
+	if(!CheckObj(pFormat)) {
         PyErr_SetString(PyExc_ValueError, "Can't get format from arguments");
     }
     format = PyLong_AsLong(pFormat);
 	
 	pOffset = PyTuple_GetItem(args, 2);
-	if(!check_object(pOffset)) {
+	if(!CheckObj(pOffset)) {
         PyErr_SetString(PyExc_ValueError, "Can't get offset from arguments");
     }
     offset = PyLong_AsLong(pOffset);
 
-    data = (char *)calloc(1, INSTRUCTION_STR_BUFFER_LENGTH);
+    char* data = (char*) calloc(1, INSTRUCTION_STR_BUFFER_LENGTH);
     if(!data) {
+		free(insn.ptr);
 		PyErr_SetString(PyExc_MemoryError, "Can't allocate memory");
 		return NULL;
 	}
@@ -550,17 +684,18 @@ PyObject *pydasm_get_instruction_string(PyObject *self, PyObject *args)
     if(!get_instruction_string(&insn, format, offset,
         data, INSTRUCTION_STR_BUFFER_LENGTH))
     {    
+	    free(insn.ptr);
+		free(data);
         Py_INCREF(Py_None);
         return Py_None;
     }
     
-    pStr = PyString_FromStringAndSize(data, strlen(data));    
+    pStr = PyUnicode_FromStringAndSize(data, strlen(data));    
     free(insn.ptr);
     free(data);
     
     return pStr;
 }
-
 
 /*
     Python counterpart of libdasm's "get_mnemonic_string"
@@ -571,12 +706,11 @@ PyObject *pydasm_get_instruction_string(PyObject *self, PyObject *args)
     "FORMAT_INTEL or FORMAT_ATT. Returns a string representation of the \n" \
     "mnemonic."
     
-PyObject *pydasm_get_mnemonic_string(PyObject *self, PyObject *args)
+PyObject* PyDAsmGetMnemonicString(PyObject* self, PyObject* args)
 {
-	PyObject *pInstruction, *pFormat, *pStr;
+	PyObject* pInstruction, *pFormat, *pStr;
 	INSTRUCTION insn;
 	unsigned long int format;
-    char *data;
 
 	if(!args || PyObject_Length(args)!=2) {
 		PyErr_SetString(PyExc_TypeError,
@@ -585,18 +719,18 @@ PyObject *pydasm_get_mnemonic_string(PyObject *self, PyObject *args)
 	}
 	
 	pInstruction = PyTuple_GetItem(args, 0);
-	if(!check_object(pInstruction)) {
+	if(!CheckObj(pInstruction)) {
         PyErr_SetString(PyExc_ValueError, "Can't get instruction from arguments");
     }
-    fill_instruction_structure(pInstruction, &insn);
+    FillInstructionStruct(pInstruction, &insn);
     
 	pFormat = PyTuple_GetItem(args, 1);
-	if(!check_object(pFormat)) {
+	if(!CheckObj(pFormat)) {
         PyErr_SetString(PyExc_ValueError, "Can't get format from arguments");
     }
     format = PyLong_AsLong(pFormat);
 	
-    data = (char *)calloc(1, INSTRUCTION_STR_BUFFER_LENGTH);
+    char* data = (char*) calloc(1, INSTRUCTION_STR_BUFFER_LENGTH);
     if(!data) {
 		PyErr_SetString(PyExc_MemoryError, "Can't allocate memory");
 		return NULL;
@@ -604,12 +738,11 @@ PyObject *pydasm_get_mnemonic_string(PyObject *self, PyObject *args)
     
     get_mnemonic_string(&insn, format, data, INSTRUCTION_STR_BUFFER_LENGTH);
       
-    pStr = PyString_FromStringAndSize(data, strlen(data));
+    pStr = PyUnicode_FromStringAndSize(data, strlen(data));
     free(data);
     
     return pStr;
 }
-
 
 /*
     Python counterpart of libdasm's "get_operand_string"
@@ -621,13 +754,11 @@ PyObject *pydasm_get_mnemonic_string(PyObject *self, PyObject *args)
     "(refer to libdasm for meaning). Returns a string representation of \n" \
     "the disassembled operand."
     
-PyObject *pydasm_get_operand_string(PyObject *self, PyObject *args)
+PyObject* PyDAsmGetOperandString(PyObject* self, PyObject* args)
 {
 	PyObject *pInstruction, *pFormat, *pOffset, *pOpIndex, *pStr;
 	INSTRUCTION insn;
 	unsigned long int offset, format, op_idx;
-    char *data;
-
     
 	if(!args || PyObject_Length(args)!=4) {
 		PyErr_SetString(PyExc_TypeError,
@@ -636,31 +767,31 @@ PyObject *pydasm_get_operand_string(PyObject *self, PyObject *args)
 	}
 	
 	pInstruction = PyTuple_GetItem(args, 0);
-	if(!check_object(pInstruction)) {
+	if(!CheckObj(pInstruction)) {
         PyErr_SetString(PyExc_ValueError, "Can't get instruction from arguments");
     }
     memset(&insn, 0, sizeof(INSTRUCTION));
-    fill_instruction_structure(pInstruction, &insn);
+    FillInstructionStruct(pInstruction, &insn);
     
 	pOpIndex = PyTuple_GetItem(args, 1);
-	if(!check_object(pOpIndex)) {
+	if(!CheckObj(pOpIndex)) {
         PyErr_SetString(PyExc_ValueError, "Can't get operand index from arguments");
     }
     op_idx = PyLong_AsLong(pOpIndex);
 	
     pFormat = PyTuple_GetItem(args, 2);
-	if(!check_object(pFormat)) {
+	if(!CheckObj(pFormat)) {
         PyErr_SetString(PyExc_ValueError, "Can't get format from arguments");
     }
     format = PyLong_AsLong(pFormat);
 	
 	pOffset = PyTuple_GetItem(args, 3);
-	if(!check_object(pOffset)) {
+	if(!CheckObj(pOffset)) {
         PyErr_SetString(PyExc_ValueError, "Can't get offset from arguments");
     }
     offset = PyLong_AsLong(pOffset);
 
-    data = (char *)calloc(1, INSTRUCTION_STR_BUFFER_LENGTH);
+    char* data = (char*) calloc(1, INSTRUCTION_STR_BUFFER_LENGTH);
     if(!data) {
 		PyErr_SetString(PyExc_MemoryError, "Can't allocate memory");
 		return NULL;
@@ -669,16 +800,16 @@ PyObject *pydasm_get_operand_string(PyObject *self, PyObject *args)
     if(!get_operand_string(&insn, &(insn.op1)+op_idx,
         format, offset, data, INSTRUCTION_STR_BUFFER_LENGTH))
     {    
-        Py_INCREF(Py_None);
+        free(data);
+		Py_INCREF(Py_None);
         return Py_None;
     }
     
-    pStr = PyString_FromStringAndSize(data, strlen(data));
+    pStr = PyUnicode_FromStringAndSize(data, strlen(data));
     free(data);
     
     return pStr;
 }
-
 
 /*
     Python counterpart of libdasm's "get_register_type"
@@ -688,9 +819,9 @@ PyObject *pydasm_get_operand_string(PyObject *self, PyObject *args)
     "The function takes an Operand object and returns a Long representing\n"\
     "the type of the register."
     
-PyObject *pydasm_get_register_type(PyObject *self, PyObject *args)
+PyObject* PyDAsmGetRegisterType(PyObject* self, PyObject* args)
 {
-	PyObject *pOperand;
+	PyObject* pOperand;
     OPERAND op;
 
 	if(!args || PyObject_Length(args)!=1) {
@@ -700,73 +831,380 @@ PyObject *pydasm_get_register_type(PyObject *self, PyObject *args)
 	}
 	
 	pOperand = PyTuple_GetItem(args, 0);
-	if(!check_object(pOperand)) {
+	if(!CheckObj(pOperand)) {
         PyErr_SetString(PyExc_ValueError, "Can't get instruction from arguments");
     }
     memset(&op, 0, sizeof(OPERAND));
-    fill_operand_structure(pOperand, &op);
+    FillOperandStruct(pOperand, &op);
         
     return PyLong_FromLong(get_register_type(&op));
 }
 
+//===========================================================
+//Definitions of methods
+//===========================================================
 
-/*
-    Map all the exported methods.
-*/
-static PyMethodDef pydasmMethods[] = {
-	{"get_instruction", pydasm_get_instruction, METH_VARARGS,
+static PyMethodDef DAsmMethods[] = {
+	{"get_instruction", PyDAsmGetInstruction, METH_VARARGS,
 	GET_INSTRUCTION_DOCSTRING},
-	{"get_instruction_string", pydasm_get_instruction_string, METH_VARARGS,
+	{"get_instruction_string", PyDAsmGetInstructionString, METH_VARARGS,
 	GET_INSTRUCTION_STRING_DOCSTRING},
-	{"get_mnemonic_string", pydasm_get_mnemonic_string, METH_VARARGS,
+	{"get_mnemonic_string", PyDAsmGetMnemonicString, METH_VARARGS,
 	GET_MNEMONIC_STRING_DOCSTRING},
-	{"get_operand_string", pydasm_get_operand_string, METH_VARARGS,
+	{"get_operand_string", PyDAsmGetOperandString, METH_VARARGS,
 	GET_OPERAND_STRING_DOCSTRING},
-	{"get_register_type", pydasm_get_register_type, METH_VARARGS,
+	{"get_register_type", PyDAsmGetRegisterType, METH_VARARGS,
 	GET_REGISTER_TYPE_DOCSTRING},
 	{NULL, NULL, 0, NULL}
 };
 
+static PyMethodDef InstMethods[] = {
+	{NULL, NULL, 0, NULL}
+};
+
+static PyMethodDef InstructionMethods[] = {
+	{NULL, NULL, 0, NULL}
+};
+
+static PyMethodDef OperandMethods[] = {
+	{NULL, NULL, 0, NULL}
+};
+
+//===========================================================
+//PyTypeObject definitions
+//===========================================================
+
+static PyTypeObject DAsmType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "pydasm.DAsm",             /* tp_name */
+    sizeof(PyDAsmObject), 	   /* tp_basicsize */
+    0,                         /* tp_itemsize */
+    (destructor)DAsm_dealloc,  /* tp_dealloc */
+    0,                         /* tp_print */
+    0,                         /* tp_getattr */
+    0,                         /* tp_setattr */
+    0,                         /* tp_reserved */
+    0,                         /* tp_repr */
+    0,                         /* tp_as_number */
+    0,                         /* tp_as_sequence */
+    0,                         /* tp_as_mapping */
+    0,                         /* tp_hash  */
+    0,                         /* tp_call */
+    0,                         /* tp_str */
+    0,                         /* tp_getattro */
+    0,                         /* tp_setattro */
+    0,                         /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT |
+        Py_TPFLAGS_BASETYPE,   /* tp_flags */
+    "DAsm objects",            /* tp_doc */
+    0,                         /* tp_traverse */
+    0,                         /* tp_clear */
+    0,                         /* tp_richcompare */
+    0,                         /* tp_weaklistoffset */
+    0,                         /* tp_iter */
+    0,                         /* tp_iternext */
+    DAsmMethods,               /* tp_methods */
+    DAsmMembers,               /* tp_members */
+    0,                         /* tp_getset */
+    0,                         /* tp_base */
+    0,                         /* tp_dict */
+    0,                         /* tp_descr_get */
+    0,                         /* tp_descr_set */
+    0,                         /* tp_dictoffset */
+    (initproc)DAsm_init,       /* tp_init */
+    0,                         /* tp_alloc */
+    DAsm_new,                  /* tp_new */
+};
+
+static PyTypeObject InstType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "pydasm.Inst",             	 	  /* tp_name */
+    sizeof(PyInstObject), 	  		  /* tp_basicsize */
+    0,                                /* tp_itemsize */
+    (destructor)Inst_dealloc,         /* tp_dealloc */
+    0,                         		  /* tp_print */
+    0,                         		  /* tp_getattr */
+    0,                                /* tp_setattr */
+    0,                         	 	  /* tp_reserved */
+    0,                         		  /* tp_repr */
+    0,                         		  /* tp_as_number */
+    0,                         		  /* tp_as_sequence */
+    0,                         		  /* tp_as_mapping */
+    0,                         		  /* tp_hash  */
+    0,                         		  /* tp_call */
+    0,                         		  /* tp_str */
+    0,                         		  /* tp_getattro */
+    0,                         		  /* tp_setattro */
+    0,                         		  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT |
+        Py_TPFLAGS_BASETYPE,   		  /* tp_flags */
+    "Inst objects",            		  /* tp_doc */
+    0,                         		  /* tp_traverse */
+    0,                         		  /* tp_clear */
+    0,                         		  /* tp_richcompare */
+    0,                         		  /* tp_weaklistoffset */
+    0,                         		  /* tp_iter */
+    0,                         		  /* tp_iternext */
+    InstMethods,              	  	  /* tp_methods */
+    InstMembers,              	  	  /* tp_members */
+    0,                         		  /* tp_getset */
+    0,                         		  /* tp_base */
+    0,                         		  /* tp_dict */
+    0,                         		  /* tp_descr_get */
+    0,                         		  /* tp_descr_set */
+    0,                         		  /* tp_dictoffset */
+    (initproc)Inst_init,       		  /* tp_init */
+    0,                         		  /* tp_alloc */
+    Inst_new,                  		  /* tp_new */
+};
+
+static PyTypeObject InstructionType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "pydasm.Instruction",             /* tp_name */
+    sizeof(PyInstructionObject), 	  /* tp_basicsize */
+    0,                                /* tp_itemsize */
+    (destructor)Instruction_dealloc,  /* tp_dealloc */
+    0,                         		  /* tp_print */
+    0,                         		  /* tp_getattr */
+    0,                                /* tp_setattr */
+    0,                         	 	  /* tp_reserved */
+    0,                         		  /* tp_repr */
+    0,                         		  /* tp_as_number */
+    0,                         		  /* tp_as_sequence */
+    0,                         		  /* tp_as_mapping */
+    0,                         		  /* tp_hash  */
+    0,                         		  /* tp_call */
+    0,                         		  /* tp_str */
+    0,                         		  /* tp_getattro */
+    0,                         		  /* tp_setattro */
+    0,                         		  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT |
+        Py_TPFLAGS_BASETYPE,   		  /* tp_flags */
+    "Instruction objects",            /* tp_doc */
+    0,                         		  /* tp_traverse */
+    0,                         		  /* tp_clear */
+    0,                         		  /* tp_richcompare */
+    0,                         		  /* tp_weaklistoffset */
+    0,                         		  /* tp_iter */
+    0,                         		  /* tp_iternext */
+    InstructionMethods,               /* tp_methods */
+    InstructionMembers,               /* tp_members */
+    0,                         		  /* tp_getset */
+    0,                         		  /* tp_base */
+    0,                         		  /* tp_dict */
+    0,                         		  /* tp_descr_get */
+    0,                         		  /* tp_descr_set */
+    0,                         		  /* tp_dictoffset */
+    (initproc)Instruction_init,       /* tp_init */
+    0,                         		  /* tp_alloc */
+    Instruction_new,                  /* tp_new */
+};
+
+static PyTypeObject OperandType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "pydasm.Operand",             /* tp_name */
+    sizeof(PyOperandObject),      /* tp_basicsize */
+    0,                         	  /* tp_itemsize */
+    (destructor)Operand_dealloc,  /* tp_dealloc */
+    0,                         	  /* tp_print */
+    0,                         	  /* tp_getattr */
+    0,                         	  /* tp_setattr */
+    0,                         	  /* tp_reserved */
+    0,                         	  /* tp_repr */
+    0,                         	  /* tp_as_number */
+    0,                         	  /* tp_as_sequence */
+    0,                         	  /* tp_as_mapping */
+    0,                         	  /* tp_hash  */
+    0,                         	  /* tp_call */
+    0,                        	  /* tp_str */
+    0,                         	  /* tp_getattro */
+    0,                         	  /* tp_setattro */
+    0,                         	  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT |
+        Py_TPFLAGS_BASETYPE,   	  /* tp_flags */
+    "Operand objects",            /* tp_doc */
+    0,                         	  /* tp_traverse */
+    0,                         	  /* tp_clear */
+    0,                         	  /* tp_richcompare */
+    0,                         	  /* tp_weaklistoffset */
+    0,                         	  /* tp_iter */
+    0,                         	  /* tp_iternext */
+    OperandMethods,               /* tp_methods */
+    OperandMembers,               /* tp_members */
+    0,                         	  /* tp_getset */
+    0,                         	  /* tp_base */
+    0,                         	  /* tp_dict */
+    0,                         	  /* tp_descr_get */
+    0,                         	  /* tp_descr_set */
+    0,                         	  /* tp_dictoffset */
+    (initproc)Operand_init,       /* tp_init */
+    0,                         	  /* tp_alloc */
+    Operand_new,                  /* tp_new */
+};
+
+//===========================================================
+//Build Python objects from C structs
+//===========================================================
+
+/*
+    Create an "Inst" Python object from an INST structure.
+*/
+PyObject* CreateInstObj(INST *pinst)
+{
+	PyObject* pPInst = PyObject_CallObject((PyObject*) &InstType, NULL);
+    
+    if(!pPInst)
+        return NULL;
+
+    AssignAttr(pPInst, "type",      PyLong_FromLong(pinst->type));
+    AssignAttr(pPInst, "mnemonic",  PyUnicode_FromString(pinst->mnemonic));
+    AssignAttr(pPInst, "flags1",    PyLong_FromLong(pinst->flags1));
+    AssignAttr(pPInst, "flags2",    PyLong_FromLong(pinst->flags2));
+    AssignAttr(pPInst, "flags3",    PyLong_FromLong(pinst->flags3));
+    AssignAttr(pPInst, "modrm",     PyLong_FromLong(pinst->modrm));
+    
+    return pPInst;
+}
+
+/*
+    Create an "Operand" Python object from an OPERAND structure.
+*/
+PyObject* CreateOperandObj(OPERAND *op)
+{
+    PyObject* pOperand = PyObject_CallObject((PyObject*) &OperandType, NULL);
+    
+    if(!pOperand)
+        return NULL;
+
+    AssignAttr(pOperand, "type", 		 PyLong_FromLong(op->type));
+    AssignAttr(pOperand, "reg", 		 PyLong_FromLong(op->reg));
+    AssignAttr(pOperand, "basereg", 	 PyLong_FromLong(op->basereg));
+    AssignAttr(pOperand, "indexreg", 	 PyLong_FromLong(op->indexreg));
+    AssignAttr(pOperand, "scale", 		 PyLong_FromLong(op->scale));
+    AssignAttr(pOperand, "dispbytes", 	 PyLong_FromLong(op->dispbytes));
+    AssignAttr(pOperand, "dispoffset", 	 PyLong_FromLong(op->dispoffset));
+    AssignAttr(pOperand, "immbytes", 	 PyLong_FromLong(op->immbytes));
+    AssignAttr(pOperand, "immoffset", 	 PyLong_FromLong(op->immoffset));
+    AssignAttr(pOperand, "sectionbytes", PyLong_FromLong(op->sectionbytes));
+    AssignAttr(pOperand, "section", 	 PyLong_FromLong(op->section));
+    AssignAttr(pOperand, "displacement", PyLong_FromLong(op->displacement));
+    AssignAttr(pOperand, "immediate", 	 PyLong_FromLong(op->immediate));
+    AssignAttr(pOperand, "flags",		 PyLong_FromLong(op->flags));
+    
+    return pOperand;
+}
+
+/*
+    Create an "Instruction" Python object from an INSTRUCTION structure.
+*/
+PyObject* CreateInstructionObj(INSTRUCTION *insn)
+{
+    PyObject* pInstruction = PyObject_CallObject((PyObject*) &InstructionType, NULL);
+
+    if(!pInstruction)
+        return NULL;
+    
+    AssignAttr(pInstruction, "length", 		 	PyLong_FromLong(insn->length));
+    AssignAttr(pInstruction, "type", 		 	PyLong_FromLong(insn->type));
+    AssignAttr(pInstruction, "mode", 		 	PyLong_FromLong(insn->mode));
+    AssignAttr(pInstruction, "opcode", 		 	PyLong_FromLong(insn->opcode));
+    AssignAttr(pInstruction, "modrm", 		 	PyLong_FromLong(insn->modrm));
+    AssignAttr(pInstruction, "sib", 		 	PyLong_FromLong(insn->sib));
+    AssignAttr(pInstruction, "extindex", 	 	PyLong_FromLong(insn->extindex));
+    AssignAttr(pInstruction, "fpuindex", 	 	PyLong_FromLong(insn->fpuindex));
+    AssignAttr(pInstruction, "dispbytes", 	 	PyLong_FromLong(insn->dispbytes));
+    AssignAttr(pInstruction, "immbytes", 	 	PyLong_FromLong(insn->immbytes));
+    AssignAttr(pInstruction, "sectionbytes", 	PyLong_FromLong(insn->sectionbytes));
+    AssignAttr(pInstruction, "op1", 		 	CreateOperandObj(&insn->op1));
+    AssignAttr(pInstruction, "op2", 	     	CreateOperandObj(&insn->op2));
+    AssignAttr(pInstruction, "op3", 		 	CreateOperandObj(&insn->op3));
+    AssignAttr(pInstruction, "ptr", 		 	CreateInstObj(insn->ptr));
+    AssignAttr(pInstruction, "flags", 		 	PyLong_FromLong(insn->flags));
+    AssignAttr(pInstruction, "eflags_affected", PyLong_FromLong(insn->eflags_affected));
+    AssignAttr(pInstruction, "eflags_used", 	PyLong_FromLong(insn->eflags_used));
+        
+    return pInstruction;
+}
+
+#define PYDASM_DESC "A libdasm Python 3 wrapper"
+
+static struct PyModuleDef moduledef = {
+	PyModuleDef_HEAD_INIT,
+	"pydasm",  			 /* m_name */
+	PYDASM_DESC,  		 /* m_doc */
+	-1,                  /* m_size */
+	NULL,    	 		 /* m_methods */
+	NULL,                /* m_reload */
+	NULL,                /* m_traverse */
+	NULL,                /* m_clear */
+	NULL,                /* m_free */
+};
 
 /*
     Init the module, set constants.
 */
-PyMODINIT_FUNC initpydasm(void)
+PyMODINIT_FUNC PyInit_pydasm(void)
 {
-    int i;
-    PyObject *pModule;
-    
-	pModule = Py_InitModule("pydasm", pydasmMethods);
+    PyObject* m;
+	
+	if(PyType_Ready(&DAsmType) < 0 || PyType_Ready(&InstType) < 0 || 
+	   PyType_Ready(&InstructionType) < 0 || PyType_Ready(&OperandType) < 0)
+		return NULL;
 
-    assign_attribute(pModule, "FORMAT_ATT", PyLong_FromLong(0));
-    assign_attribute(pModule, "FORMAT_INTEL", PyLong_FromLong(1));
+	m = PyModule_Create(&moduledef);
+	if (NULL == m)
+		return NULL;
+	
+    AssignAttr(m, "FORMAT_ATT", PyLong_FromLong(0));
+    AssignAttr(m, "FORMAT_INTEL", PyLong_FromLong(1));
 
-    assign_attribute(pModule, "MODE_16", PyLong_FromLong(1));
-    assign_attribute(pModule, "MODE_32", PyLong_FromLong(0));
+    AssignAttr(m, "MODE_16", PyLong_FromLong(1));
+    AssignAttr(m, "MODE_32", PyLong_FromLong(0));
     
-    for(i=0; instruction_types[i]; i++)
-        assign_attribute(pModule, instruction_types[i], PyLong_FromLong(i));
+    for(int i = 0; instruction_types[i]; i++)
+        AssignAttr(m, instruction_types[i], PyLong_FromLong(i));
     
-    for(i=0; operand_types[i]; i++)
-        assign_attribute(pModule, operand_types[i], PyLong_FromLong(i));
+    for(int i = 0; operand_types[i]; i++)
+        AssignAttr(m, operand_types[i], PyLong_FromLong(i));
 
-    for(i=0; registers[i]; i++)
-        assign_attribute(pModule, registers[i], PyLong_FromLong(i));
+    for(int i = 0; registers[i]; i++)
+        AssignAttr(m, registers[i], PyLong_FromLong(i));
         
-    for(i=0; register_types[i]; i++)
-        assign_attribute(pModule, register_types[i], PyLong_FromLong(i+1));
+    for(int i = 0; register_types[i]; i++)
+        AssignAttr(m, register_types[i], PyLong_FromLong(i+1));
+	
+	Py_INCREF(&DAsmType);
+	PyModule_AddObject(m, "DAsm", (PyObject*) &DAsmType);
 
+	Py_INCREF(&InstType);
+	PyModule_AddObject(m, "Inst", (PyObject*) &InstType);
+	
+	Py_INCREF(&InstructionType);
+	PyModule_AddObject(m, "Instruction", (PyObject*) &InstructionType);
+	
+	Py_INCREF(&OperandType);
+	PyModule_AddObject(m, "Operand", (PyObject*) &OperandType);
+	
+	return m;
 }
 
 
-int main(int agrc, char *argv[])
-{
-	Py_SetProgramName(argv[0]);
+int main(int agrc, char* argv[]) {
+	wchar_t* pName = Py_DecodeLocale(argv[0], NULL);
+    if (NULL == pName) {
+        fprintf(stderr, "Fatal error: cannot decode argv[0]\n");
+        exit(1);
+    }
+	
+	PyImport_AppendInittab("pydasm", PyInit_pydasm);
+	
+	Py_SetProgramName(pName);
 	
 	Py_Initialize();
 	
-	initpydasm();
+	PyInit_pydasm();
+	
+	PyMem_RawFree(pName);
 
 	return 0;
 }
-
